@@ -11,116 +11,175 @@ pub enum Exp {
     Add(Box<Exp>, Box<Exp>),
     Neg(Box<Exp>),
     Conj(Box<Exp>, Box<Exp>),
-    Comp(Box<Exp>, Box<Exp>)
+    Comp(Box<Exp>, Box<Exp>),
+    ReadStore(String),
+    ReadHeap(String)
 }
 
 #[derive(Clone)]
 pub enum Stmt {
-    // TODO: change box<Exp> to variable later somehow. For now handled in typeCheck
     Assign(Box<Exp>, Box<Exp>),
     Seq(Box<Stmt>, Box<Stmt>),
     Cond(Box<Exp>, Box<Stmt>, Box<Stmt>),
     Skip,
-    Break,
     While(Box<Exp>, Box<Stmt>),
     New(Box<Exp>, Box<Exp>),
     Update(Box<Exp>, Box<Exp>)
 }
 
-
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum Tp{
     BoolVal, NumVal, Loc(i32)
 }
 
 
-// Question: env probably should be <String, Tp> just to denote what it stores 
-
 fn typeCheckExp(exp: Exp, env: &HashMap<String, Tp>, mut locs: &HashMap<i32, Tp>) -> Option<Tp> {
     match exp {
         Const(_) => Some(NumVal),
         BoolConst(_) => Some(BoolVal),
+        Add(x, y) => {
+            let res1 = typeCheckExp(*x, &env, &locs);
+            let res2 = typeCheckExp(*y, &env, &locs);
+            match (res1, res2) {
+                (Some(NumVal), Some(NumVal)) => Some(NumVal),
+                _ => None
+            }
+        }
+        ReadStore(var) => env.get(&var).copied(),
         _ => Some(BoolVal)
     }
 }
 
-fn typeCheck(st: Stmt, mut env: HashMap<String, Tp>, mut locs: HashMap<i32, Tp>) -> bool {
+fn typeCheck(st: Stmt, mut env: HashMap<String, Tp>, mut locs: HashMap<i32, Tp>) -> (bool, HashMap<String, Tp>, HashMap<i32, Tp>) {
     match st {
         Assign(var, val) => {
             if let Var(x) = *var {
                 let evalVal = typeCheckExp(*val, &env, &locs);
-                if(!evalVal.is_none()){
-                    return false
+                if evalVal.is_none(){
+                    return (false, env, locs)
                 }
                 env.insert(x, evalVal.unwrap());
+                return (true, env, locs)
             }
-            return false
+            return (false, env, locs)
         }
+
         New(var, val) => {
             if let Var(x) = *var {
                 let evalVal = typeCheckExp(*val, &env, &locs);
-                if(!evalVal.is_none()){
-                    return false
+                if evalVal.is_none() {
+                    return (false, env, locs)
                 }
-                let curLoc = locs.keys().max().unwrap_or(&0).clone();
+                let curLoc = locs.keys().max().copied().unwrap_or(0);
                 locs.insert(curLoc, evalVal.unwrap());
                 env.insert(x, Loc(curLoc));
-                return true;
+                return (true, env, locs)
             }
-            return false
+            return (false, env, locs)
         }
 
+        Update(var, val) => {
+            if let Var(x) = *var {
+                if let Loc(curLoc) = env.get(&x).copied().unwrap_or(BoolVal) {
+                    let evalVal = typeCheckExp(*val, &env, &locs);
+                    if evalVal.is_none(){
+                        return (false, env, locs)
+                    }
+                    env.insert(x, Loc(curLoc));
+                    return (true, env, locs)
+                }
+                return (false, env, locs)
+            }
+            return (false, env, locs)
+        }
 
-
-        _ => true
+        Seq(st1, st2) => {
+            let (res1, env1, locs1) = typeCheck(*st1, env, locs);
+            if !res1 {
+                return (false, env1, locs1)
+            } 
+            return typeCheck(*st2, env1, locs1)
+        }
+        Skip => (true, env, locs),
+        _ =>  (false, env, locs)
     }
 }
 fn main() {
-    let ex = Assign(Box::new(Var(String::from("x"))), Box::new(Const(0)));
-    // let ex1 = Stmt::Seq(Exp::Const(0), Skip);
-
-    println!("Result is {:?} ", typeCheck(ex, HashMap::new(), HashMap::new()));
+    let x = createVal(String::from("x"), Box::new(Const(0)));
+    let ex = Seq(x, createVal(String::from("y"), Box::new(ReadStore(String::from("l")))));
+    println!("Result is {} ", typeCheck(ex, HashMap::new(), HashMap::new()).0);
 }
 
-// fn eval(mut sigma: HashMap<String, i32>, b : ImpStmt) -> (HashMap<String, i32>, Signal) {
-//     let bcopy = b.clone();
-//     match b {
-//         ImpStmt:: Assign(x, a) => {
-//             sigma.insert(x, aeval(&sigma, *a));
-//             (sigma, Signal::Continue)
-//         }
-//         ImpStmt:: Seq(x, y) => {
-//             let (sigma1, sig1) = eval(sigma, *x);
-//             if let sig1 = Signal::Break {
-//                 return (sigma1, sig1);
-//             }
-//             eval(sigma1, *y)
-//         }
-//         ImpStmt::Cond(cond, x, y) => {
-//             if beval(&sigma, *cond) {
-//                 eval(sigma, *x)
-//             }else{
-//                 eval(sigma, *y)
-//             }
-//         }
-//         ImpStmt::Skip => (sigma, Signal::Continue),
-//         ImpStmt::Break => (sigma, Signal::Break), 
-//         ImpStmt:: While(cond, x) => {
-//             if beval(&sigma, *cond) {
-//                 let (sigma1, sig) = eval(sigma, *x);
-//                 if let sig = Signal::Break {
-//                     (sigma1, Signal::Continue)
-//                 }
-//                 else{
-//                     eval(sigma1, bcopy)
-//                 }
-//             }
-//             else{
-//                 (sigma, Signal:: Continue)
-//             }
-//         }
-//     }
-// }
+fn createVal(var:String, exp: Box<Exp>) -> Box<Stmt> {
+    return Box::new(Assign(Box::new(Var(String::from(var))), exp))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pass_assignVal_eligVarName() {
+        let ex = createVal(String::from("x"), Box::new(Const(0)));
+        let (res, env2, _) = typeCheck(*ex, HashMap::new(), HashMap::new());
+        assert_eq!(res, true);
+        assert_eq!(env2.contains_key("x"), true);
+    }
+
+    #[test]
+    fn fail_assignVal_notEligVarName() {
+        let ex =Box::new(Assign(Box::new(Const(0)), Box::new(Const(0))));
+        assert_eq!(typeCheck(*ex, HashMap::new(), HashMap::new()).0, false);
+    }
+
+    #[test]
+    fn pass_readStore() {
+        let x = createVal(String::from("x"), Box::new(Const(0)));
+        let ex = Seq(x, createVal(String::from("y"), Box::new(ReadStore(String::from("x")))));
+        assert_eq!(typeCheck(ex, HashMap::new(), HashMap::new()).0, true);
+    }
+    #[test]
+    fn fail_readStore() {
+        let ex = createVal(String::from("y"), Box::new(ReadStore(String::from("l"))));
+        assert_eq!(typeCheck(*ex, HashMap::new(), HashMap::new()).0, false);
+    }
+    #[test]
+    fn pass_Seq() {
+        let x = createVal(String::from("x"), Box::new(Const(0)));
+        assert_eq!(typeCheck(Seq(x, Box::new(Skip)), HashMap::new(), HashMap::new()).0, true);
+    }
+    #[test]
+    fn fail_Seq(){
+        let x = createVal(String::from("x"), Box::new(Const(0)));
+        let ex = Seq(createVal(String::from("y"), Box::new(ReadStore(String::from("l")))), x);
+        assert_eq!(typeCheck(ex, HashMap::new(), HashMap::new()).0, false);
+    }
+
+    // question: Is it possible to change the type that is stored in the heap? like loc 0 holds numerical, update it to bool?
+    #[test]
+    fn pass_newLoc_updateLoc() {
+        let x = Box::new(New(Box::new(Var(String::from("x"))), Box::new(Const(0))));
+        let res = typeCheck(Seq(x, Box::new(Skip)), HashMap::new(), HashMap::new());
+        assert_eq!(res.0, true);
+        assert_eq!(res.2.contains_key(&0), true);
+        let y = Update(Box::new(Var(String::from("x"))), Box::new(Const(1)));
+        let res2 = typeCheck(y, res.1, res.2);
+        assert_eq!(res2.0, true);
+        assert_eq!(res2.2.contains_key(&0), true);
+    }
+
+    #[test]
+    fn fail_newLoc() {
+        let x = Box::new(New(Box::new(Const(0)), Box::new(Const(0))));
+        assert_eq!(typeCheck(Seq(x, Box::new(Skip)), HashMap::new(), HashMap::new()).0, false);
+    }
+
+    fn pass_typeCheckExp() {
+
+    }
+
+
+}
 
 
 
