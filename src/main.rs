@@ -3,7 +3,7 @@ use Exp::*;
 use Stmt::*;
 use Tp::*;
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Exp {
     Var(String),
     ReadHeap(String),
@@ -15,7 +15,7 @@ pub enum Exp {
     Comp(Box<Exp>, Box<Exp>)
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq)]
 pub enum Stmt {
     Assign(Box<Exp>, Box<Exp>),
     Update(Box<Exp>, Box<Exp>),
@@ -27,7 +27,7 @@ pub enum Stmt {
     While(Box<Exp>, Box<Stmt>)
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Tp{
     BoolVal(bool), NumVal(i32), Loc(i32)
 }
@@ -101,10 +101,10 @@ fn typeCheck(st: Stmt, mut env: HashMap<String, Tp>, mut locs: HashMap<i32, Tp>)
         New(var, val) => {
             if let Var(x) = *var {
                 let evalVal = typeCheckExp(*val, &env, &locs);
-                if evalVal.is_none() {
+                if evalVal.is_none() || env.contains_key(&x) {
                     return (false, env, locs)
                 }
-                let curLoc = locs.keys().max().copied().unwrap_or(0);
+                let curLoc = locs.keys().max().copied().unwrap_or(0)+1;
                 locs.insert(curLoc, evalVal.unwrap());
                 env.insert(x, Loc(curLoc));
                 return (true, env, locs)
@@ -190,79 +190,109 @@ fn main() {
 fn createVal(var:String, exp: Box<Exp>) -> Box<Stmt> {
     return Box::new(Assign(Box::new(Var(String::from(var))), exp))
 }
+fn getVal(var: &str) -> Box<Exp> {
+    return Box::new(Var(String::from(var)))
+}
 
+fn generateTestVals() -> (HashMap<String, Tp>, HashMap<i32, Tp>) {
+    let x = createVal(String::from("x"), Box::new(Const(3)));
+    let y = createVal(String::from("y"), Box::new(Const(-2)));
+    let z = Box::new(New(Box::new(Var(String::from("z"))), Box::new(Const(1))));
+    let a = createVal(String::from("a"), Box::new(BoolConst(true)));
+    let b = createVal(String::from("b"), Box::new(BoolConst(false)));
+    let c = Box::new(New(Box::new(Var(String::from("c"))), Box::new(BoolConst(true))));
+    let seq = Seq(Box::new(Seq(Box::new(Seq(Box::new(Seq(Box::new(Seq(a, b)), x)), y)), z)), c);
+    let (res, env, locs ) = typeCheck(seq, HashMap::new(), HashMap::new());
+    return (env, locs)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn pass_parseExp() {
-        let x = createVal(String::from("x"), Box::new(Const(3)));
-        let y = createVal(String::from("y"), Box::new(Const(-2)));
-        let z = Box::new(New(Box::new(Var(String::from("z"))), Box::new(Const(0))));
+        let (env, locs) = generateTestVals();
+        // passing asserts typeCheckExp
+        assert_eq!(typeCheckExp(Var(String::from("x")), &env, &locs), Some(NumVal(3)));
+        assert_eq!(typeCheckExp(Var(String::from("a")), &env, &locs), Some(BoolVal(true)));
+        assert_eq!(typeCheckExp(ReadHeap(String::from("z")), &env, &locs), Some(NumVal(1)));
+        assert_eq!(typeCheckExp(Const(0), &env, &locs), Some(NumVal(0)));
+        assert_eq!(typeCheckExp(BoolConst(true), &env, &locs), Some(BoolVal(true)));
+        assert_eq!(typeCheckExp(Add(Box::new(Var(String::from("x"))), Box::new(Var(String::from("y")))), &env, &locs), Some(NumVal(1)));
+        assert_eq!(typeCheckExp(Neg(Box::new(Var(String::from("a")))), &env, &locs), Some(BoolVal(false)));
+        assert_eq!(typeCheckExp(Conj(Box::new(Var(String::from("a"))), Box::new(BoolConst(true))), &env, &locs), Some(BoolVal(true)));
+        assert_eq!(typeCheckExp(Conj(Box::new(Var(String::from("a"))), Box::new(Var(String::from("b")))), &env, &locs), Some(BoolVal(false)));
+        assert_eq!(typeCheckExp(Comp(Box::new(Var(String::from("y"))), Box::new(Var(String::from("x")))), &env, &locs), Some(BoolVal(true)));
+    }
+
+    #[test]
+    fn fail_parseExp() {
+        let (env, locs) = generateTestVals();
+        // missing val in env/locs
+        assert_eq!(typeCheckExp(Var(String::from("none")), &env, &locs), None);
+        assert_eq!(typeCheckExp(Add(getVal("none"), getVal("x")), &env, &locs), None);
+        assert_eq!(typeCheckExp(ReadHeap(String::from("x")), &env, &locs), None);
+        // different types
+        assert_eq!(typeCheckExp(Add(getVal("x"), getVal("a")), &env, &locs), None);
+        assert_eq!(typeCheckExp(Neg(getVal("x")), &env, &locs), None);
+        assert_eq!(typeCheckExp(Conj(getVal("x"), getVal("a")), &env, &locs), None);
+        assert_eq!(typeCheckExp(Comp(getVal("x"), getVal("a")), &env, &locs), None);
+    }
+
+    #[test]
+    fn pass_parstStmt() {
+        let (env, locs) = generateTestVals();
+        // assertion that all values are in env as should be
+        assert_eq!(env.get("x").copied(), Some(NumVal(3)));
+        assert_eq!(env.get("y").copied(), Some(NumVal(-2)));
+        assert_eq!(env.get("z").copied(), Some(Loc(1)));
+        assert_eq!(locs.get(&1).copied(), Some(NumVal(1)));
+        assert_eq!(env.get("a").copied(), Some(BoolVal(true)));
+        assert_eq!(env.get("b").copied(), Some(BoolVal(false)));
+        assert_eq!(env.get("c").copied(), Some(Loc(2)));
+        assert_eq!(locs.get(&2).copied(), Some(BoolVal(true)));
+
+        // 
+        assert_eq!(typeCheck(Cond(Box::new(BoolConst(true)), Box::new(Skip), Box::new(Skip)), env.clone(), locs.clone()).0, true);
+        let updateRes = typeCheck(Update(getVal("x"), Box::new(Const(0))), env.clone(), locs.clone());
+        assert_eq!(updateRes.0, true);
+        assert_eq!(updateRes.1.get("x").copied(), Some(NumVal(0)));
+    }
+    #[test]
+    fn fail_parseStmt() {
+        let (env, locs) = generateTestVals();
+        // already existing val
+        assert_eq!(typeCheck(Assign(getVal("x"), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
+        assert_eq!(typeCheck(New(getVal("x"), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
+        assert_eq!(typeCheck(Alias(getVal("x"), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
         
-    }
+        // not variable passed
+        assert_eq!(typeCheck(Assign(Box::new(Const(0)), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
+        assert_eq!(typeCheck(New(Box::new(BoolConst(true)), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
+        assert_eq!(typeCheck(Update(Box::new(Const(0)), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
+        
 
-    #[test]
-    fn pass_assignVal_eligVarName() {
-        let ex = createVal(String::from("x"), Box::new(Const(0)));
-        let (res, env2, _) = typeCheck(*ex, HashMap::new(), HashMap::new());
-        assert_eq!(res, true);
-        assert_eq!(env2.contains_key("x"), true);
-    }
+        // fail parseExp
+        let expErr = Box::new(Var(String::from("none")));
+        assert_eq!(typeCheckExp(*expErr.clone(), &env, &locs), None);
+        assert_eq!(typeCheck(Assign(getVal("new"), expErr.clone()), env.clone(), locs.clone()).0, false);
+        assert_eq!(typeCheck(New(getVal("new"), expErr.clone()), env.clone(), locs.clone()).0, false);
+        assert_eq!(typeCheck(Update(getVal("x"), expErr.clone()), env.clone(), locs.clone()).0, false);
+        
+        // test conds
+        // assert_eq!(typeCheck(Cond(Box::new(BoolConst(true)), Box::new(Update(getVal("x"), Box::new(Const(0)))), 
+        //                     Box::new(Update(getVal("none"), Box::new(Const(0))))), env.clone(), locs.clone()).0, false);    
 
-    #[test]
-    fn fail_assignVal_notEligVarName() {
-        let ex =Box::new(Assign(Box::new(Const(0)), Box::new(Const(0))));
-        assert_eq!(typeCheck(*ex, HashMap::new(), HashMap::new()).0, false);
+        // assert_eq!(typeCheck(st, env.clone(), locs.clone()).0, false);    
+        // Assign(Box<Exp>, Box<Exp>),
+        // Update(Box<Exp>, Box<Exp>),
+        // Alias(Box<Exp>, Box<Exp>),
+        // New(Box<Exp>, Box<Exp>),
+        // Seq(Box<Stmt>, Box<Stmt>),
+        // Cond(Box<Exp>, Box<Stmt>, Box<Stmt>),
+        // Skip,
+        // While(Box<Exp>, Box<Stmt>)
     }
-
-    #[test]
-    fn pass_readStore() {
-        let x = createVal(String::from("x"), Box::new(Const(0)));
-        let ex = Seq(x, createVal(String::from("y"), Box::new(Var(String::from("x")))));
-        assert_eq!(typeCheck(ex, HashMap::new(), HashMap::new()).0, true);
-    }
-    #[test]
-    fn fail_readStore() {
-        let ex = createVal(String::from("y"), Box::new(Var(String::from("l"))));
-        assert_eq!(typeCheck(*ex, HashMap::new(), HashMap::new()).0, false);
-    }
-    #[test]
-    fn pass_Seq() {
-        let x = createVal(String::from("x"), Box::new(Const(0)));
-        assert_eq!(typeCheck(Seq(x, Box::new(Skip)), HashMap::new(), HashMap::new()).0, true);
-    }
-    #[test]
-    fn fail_Seq(){
-        let x = createVal(String::from("x"), Box::new(Const(0)));
-        let ex = Seq(createVal(String::from("y"), Box::new(Var(String::from("l")))), x);
-        assert_eq!(typeCheck(ex, HashMap::new(), HashMap::new()).0, false);
-    }
-
-    // question: Is it possible to change the type that is stored in the heap? like loc 0 holds numerical, update it to bool?
-    #[test]
-    fn pass_newLoc_updateLoc() {
-        let x = Box::new(New(Box::new(Var(String::from("x"))), Box::new(Const(0))));
-        let res = typeCheck(Seq(x, Box::new(Skip)), HashMap::new(), HashMap::new());
-        assert_eq!(res.0, true);
-        assert_eq!(res.2.contains_key(&0), true);
-        let y = Update(Box::new(Var(String::from("x"))), Box::new(Const(1)));
-        let res2 = typeCheck(y, res.1, res.2);
-        assert_eq!(res2.0, true);
-        assert_eq!(res2.2.contains_key(&0), true);
-    }
-
-    #[test]
-    fn fail_newLoc() {
-        let x = Box::new(New(Box::new(Const(0)), Box::new(Const(0))));
-        assert_eq!(typeCheck(Seq(x, Box::new(Skip)), HashMap::new(), HashMap::new()).0, false);
-    }
-
-    fn pass_typeCheckExp() {
-
-    }
-
 
 }
 
