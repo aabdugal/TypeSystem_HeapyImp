@@ -119,7 +119,8 @@ fn typeCheck(st: Stmt, mut env: HashMap<String, Tp>, mut locs: HashMap<i32, Tp>)
                     if evalVal.is_none(){
                         return (false, env, locs)
                     }
-                    env.insert(x, Loc(curLoc));
+                    // env.insert(x, Loc(curLoc));
+                    locs.insert(curLoc, evalVal.unwrap());
                     return (true, env, locs)
                 }
                 return (false, env, locs)
@@ -254,9 +255,9 @@ mod tests {
 
         // 
         assert_eq!(typeCheck(Cond(Box::new(BoolConst(true)), Box::new(Skip), Box::new(Skip)), env.clone(), locs.clone()).0, true);
-        let updateRes = typeCheck(Update(getVal("x"), Box::new(Const(0))), env.clone(), locs.clone());
+        let updateRes = typeCheck(Update(getVal("z"), Box::new(Const(0))), env.clone(), locs.clone());
         assert_eq!(updateRes.0, true);
-        assert_eq!(updateRes.1.get("x").copied(), Some(NumVal(0)));
+        assert_eq!(updateRes.2.get(&1).copied(), Some(NumVal(0)));
     }
     #[test]
     fn fail_parseStmt() {
