@@ -195,14 +195,15 @@ fn getVal(var: &str) -> Box<Exp> {
 return Box::new(Var(String::from(var)))
 }
 
-fn getLoc(var : &str, env : HashMap<String, Tp>, locs : HashMap<i32, Tp>) -> i32{
+fn getLocVal(var : &str, env : HashMap<String, Tp>, locs : HashMap<i32, Tp>) -> Tp{
     if let Loc(curLoc) = env.get(var).copied().unwrap_or(BoolVal(false)) {
-        return curLoc;
+        return locs.get(&curLoc).copied().unwrap()
     }
-    return -1;
+    return BoolVal(false);
 }
 
 fn generateTestVals() -> (HashMap<String, Tp>, HashMap<i32, Tp>) {
+    // values: x = 3; y=-2; z = [1]; a = true; b = false; c = [true]
     let x = createVal(String::from("x"), Box::new(Const(3)));
     let y = createVal(String::from("y"), Box::new(Const(-2)));
     let z = Box::new(New(Box::new(Var(String::from("z"))), Box::new(Const(1))));
@@ -215,7 +216,8 @@ fn generateTestVals() -> (HashMap<String, Tp>, HashMap<i32, Tp>) {
 }
 #[cfg(test)]
 mod tests {
-    use std::{clone, ops::Add, io::Read};
+
+    use std::io::Read;
 
     use super::*;
 
@@ -320,16 +322,29 @@ mod tests {
         // test conds
         assert_eq!(typeCheck(Cond(Box::new(BoolConst(true)), Box::new(Update(getVal("x"), Box::new(Const(0)))), 
                             Box::new(Update(getVal("none"), Box::new(Const(0))))), env.clone(), locs.clone()).0, false);    
+    }
 
-        // assert_eq!(typeCheck(st, env.clone(), locs.clone()).0, false);    
-        // Assign(Box<Exp>, Box<Exp>),
-        // Update(Box<Exp>, Box<Exp>),
-        // Alias(Box<Exp>, Box<Exp>),
-        // New(Box<Exp>, Box<Exp>),
-        // Seq(Box<Stmt>, Box<Stmt>),
-        // Cond(Box<Exp>, Box<Stmt>, Box<Stmt>),
-        // Skip,
-        // While(Box<Exp>, Box<Stmt>)
+    #[test]
+    fn pas_big_case () {
+        // x = 3; y=-2; z = [1]; a = true; b = false; c = [true]; d = z; 
+        // if([c] && (neg a)) {
+        //     while z <= x {
+        //         d+=1
+        //     }
+        // } else {
+        //     Skip;
+        // }
+        let (env, locs) = generateTestVals();
+        let compSeq = Box::new(Comp(Box::new(ReadHeap(String::from("z"))), getVal("x")));
+        let addToD = Box::new(Add(Box::new(ReadHeap(String::from("d"))), Box::new(Const(1))));
+        let whileSeq = Box::new(While(compSeq, 
+            Box::new(Update(getVal("z"), addToD))));
+        let conjSeq = Box::new(Conj(Box::new(ReadHeap(String::from("c"))),
+            Box::new(Neg(getVal("a")))));
+        let condSeq = Box::new(Cond(conjSeq, 
+                whileSeq, 
+                Box::new(Skip)));
+        assert_eq!(typeCheck(*condSeq, env.clone(), locs.clone()).0, true);
     }
 
 }
