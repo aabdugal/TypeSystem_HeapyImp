@@ -192,7 +192,14 @@ fn createVal(var:String, exp: Box<Exp>) -> Box<Stmt> {
     return Box::new(Assign(Box::new(Var(String::from(var))), exp))
 }
 fn getVal(var: &str) -> Box<Exp> {
-    return Box::new(Var(String::from(var)))
+return Box::new(Var(String::from(var)))
+}
+
+fn getLoc(var : &str, env : HashMap<String, Tp>, locs : HashMap<i32, Tp>) -> i32{
+    if let Loc(curLoc) = env.get(var).copied().unwrap_or(BoolVal(false)) {
+        return curLoc;
+    }
+    return -1;
 }
 
 fn generateTestVals() -> (HashMap<String, Tp>, HashMap<i32, Tp>) {
@@ -208,6 +215,8 @@ fn generateTestVals() -> (HashMap<String, Tp>, HashMap<i32, Tp>) {
 }
 #[cfg(test)]
 mod tests {
+    use std::{clone, ops::Add, io::Read};
+
     use super::*;
 
     #[test]
@@ -258,6 +267,17 @@ mod tests {
         let updateRes = typeCheck(Update(getVal("z"), Box::new(Const(0))), env.clone(), locs.clone());
         assert_eq!(updateRes.0, true);
         assert_eq!(updateRes.2.get(&1).copied(), Some(NumVal(0)));
+        //testing alias and update tgthr
+        let updateRes2 = typeCheck(Seq(Box::new(Alias(getVal("k"), getVal("c"))), Box::new(Update(getVal("k"), Box::new(BoolConst(false))))), env.clone(), locs.clone());
+        assert_eq!(updateRes2.2.get(&2).copied(), Some(BoolVal(false)));
+        //testing while
+        let z_comp = Box::new(Comp(Box::new(ReadHeap(String::from("z"))), Box::new(Const(5))));
+        let z_body = Box::new(Update(getVal("z"), Box::new(Add(Box::new(ReadHeap(String::from("z"))), Box::new(Const(1))))));
+        let while_res = typeCheck(While(z_comp, z_body), env.clone(), locs.clone());
+        assert_eq!(while_res.2.get(&1).copied(), Some(NumVal(6)));
+        //testing conj and cond
+        let test_conj = typeCheck(Cond(Box::new(Conj(Box::new(BoolConst(true)), Box::new(BoolConst(true)))), Box::new(Skip), Box::new(Skip)), env.clone(), locs.clone());
+        assert_eq!(test_conj.0, true);
     }
     #[test]
     fn fail_parseStmt() {
@@ -266,7 +286,11 @@ mod tests {
         assert_eq!(typeCheck(Assign(getVal("x"), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
         assert_eq!(typeCheck(New(getVal("x"), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
         assert_eq!(typeCheck(Alias(getVal("x"), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
-        
+        //alias should not contain var2
+        assert_eq!(typeCheck(Alias(getVal("z"), getVal("x")), env.clone(), locs.clone()).0, false);
+        //update should contain var1
+        assert_eq!(typeCheck(Update(getVal("x"), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
+
         // not variable passed
         assert_eq!(typeCheck(Assign(Box::new(Const(0)), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
         assert_eq!(typeCheck(New(Box::new(BoolConst(true)), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
@@ -280,9 +304,22 @@ mod tests {
         assert_eq!(typeCheck(New(getVal("new"), expErr.clone()), env.clone(), locs.clone()).0, false);
         assert_eq!(typeCheck(Update(getVal("x"), expErr.clone()), env.clone(), locs.clone()).0, false);
         
+        // type check failing var
+        assert_eq!(typeCheck(Assign(Box::new(Const(0)), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
+        assert_eq!(typeCheck(New(Box::new(Const(0)), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
+        //var1 var2 should be vars
+        assert_eq!(typeCheck(Alias(Box::new(Const(0)), Box::new(Const(0))), env.clone(), locs.clone()).0, false);
+
+        //type check if val cannot be eval'd
+        assert_eq!(typeCheck(Assign(getVal("p"), Box::new(ReadHeap(String::from("x")))), env.clone(), locs.clone()).0, false);
+        assert_eq!(typeCheck(New(getVal("p"), Box::new(ReadHeap(String::from("x")))), env.clone(), locs.clone()).0, false);
+        assert_eq!(typeCheck(Alias(getVal("p"), Box::new(ReadHeap(String::from("x")))), env.clone(), locs.clone()).0, false);
+
+        //test seq
+        assert_eq!(typeCheck(Seq(Box::new(Assign(Box::new(Const(0)), Box::new(Const(0)))), Box::new(Assign(getVal("p"), Box::new(Const(0))))), env.clone(), locs.clone()).0, false);
         // test conds
-        // assert_eq!(typeCheck(Cond(Box::new(BoolConst(true)), Box::new(Update(getVal("x"), Box::new(Const(0)))), 
-        //                     Box::new(Update(getVal("none"), Box::new(Const(0))))), env.clone(), locs.clone()).0, false);    
+        assert_eq!(typeCheck(Cond(Box::new(BoolConst(true)), Box::new(Update(getVal("x"), Box::new(Const(0)))), 
+                            Box::new(Update(getVal("none"), Box::new(Const(0))))), env.clone(), locs.clone()).0, false);    
 
         // assert_eq!(typeCheck(st, env.clone(), locs.clone()).0, false);    
         // Assign(Box<Exp>, Box<Exp>),
